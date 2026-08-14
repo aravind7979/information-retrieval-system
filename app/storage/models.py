@@ -11,3 +11,10 @@ class DocumentMetadata(Base):
     extension = Column(String)
     size_bytes = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class SearchHistory(Base):
+    __tablename__ = "search_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    query_text = Column(String, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

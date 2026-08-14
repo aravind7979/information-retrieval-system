@@ -28,7 +28,6 @@ my_documents = {}
 final_cleaned_document_data = {}
 inverted_index = {}
 doc_lengths = {}
-query_search = []
 
 def initialize_search_engine():
     global my_documents, final_cleaned_document_data, inverted_index, doc_lengths
@@ -73,9 +72,14 @@ def get_db():
 
 @app.get("/search")
 def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_db)):
+    
+    # Phase 3 Logic: Save History to SQLite instead of in-memory list
     if is_submit:
-        if query not in query_search:
-            query_search.append(query)
+        existing_history = db.query(models.SearchHistory).filter(models.SearchHistory.query_text == query).first()
+        if not existing_history:
+            new_history = models.SearchHistory(query_text=query)
+            db.add(new_history)
+            db.commit()
             
     clean_query = clean_and_tokenize(query)
     document_scores = {}
@@ -106,13 +110,14 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             "type": "document"
         })
     
-    # Add history matches (simplified for now)
-    for item in query_search:
-        if query.lower() in item.lower():
+    # Phase 3 Logic: Fetch History Matches from SQLite
+    all_history_records = db.query(models.SearchHistory).all()
+    for record in all_history_records:
+        if query.lower() in record.query_text.lower():
             # Check if history item is already added to results
-            if not any(r["title"] == item for r in formatted_results):
+            if not any(r["title"] == record.query_text for r in formatted_results):
                 formatted_results.append({
-                    "title": item,
+                    "title": record.query_text,
                     "score": 0,
                     "snippet": "Previous Search",
                     "type": "history"
