@@ -1,7 +1,8 @@
 import os
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from app.ingestion.reader import load_documents
 from app.preprocessing.cleaner import clean_and_tokenize
@@ -72,7 +73,13 @@ def get_db():
         db.close()
 
 @app.get("/search")
-def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_db)):
+def search_docs(
+    query: str, 
+    is_submit: bool = False, 
+    ext_filter: Optional[str] = None, 
+    sort_by: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     
     if is_submit:
         existing_history = db.query(models.SearchHistory).filter(models.SearchHistory.query_text == query).first()
@@ -81,13 +88,11 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             db.add(new_history)
             db.commit()
             
-    # Phase 5 Logic: Phrase Search Parsing
     operator, parts, is_phrase, stripped_query = parse_boolean_query(query)
     
     part_doc_sets = []
     all_clean_words = [] 
     
-    # Get documents for each part of the boolean query
     for part in parts:
         clean_part = clean_and_tokenize(part)
         all_clean_words.extend(clean_part)
@@ -99,7 +104,6 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
                     part_docs.add(filename)
         part_doc_sets.append(part_docs)
         
-    # Apply Boolean Logic (AND / OR / NOT) using Python Sets
     final_docs = set()
     if operator == "OR":
         for doc_set in part_doc_sets:
@@ -115,18 +119,25 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             if len(part_doc_sets) > 1:
                 final_docs = final_docs.difference(part_doc_sets[1])
 
-    # Phase 5: Filter exact phrases
     if is_phrase:
         phrase_filtered_docs = set()
         search_target = stripped_query.lower()
         for doc in final_docs:
             original_text = my_documents.get(doc, "").lower()
-            # Direct string substring check for exact phrasing
             if search_target in original_text:
                 phrase_filtered_docs.add(doc)
         final_docs = phrase_filtered_docs
 
-    # Calculate TF-IDF Score only for documents that passed the filters
+    # Phase 6: Extension Filtering using SQLite DB
+    if ext_filter:
+        valid_ext_docs = set()
+        for doc in final_docs:
+            db_doc = db.query(models.DocumentMetadata).filter(models.DocumentMetadata.filename == doc).first()
+            if db_doc and db_doc.extension.lower() == ext_filter.lower():
+                valid_ext_docs.add(doc)
+        final_docs = valid_ext_docs
+
+    # Calculate TF-IDF Score
     document_scores = {}
     for word in all_clean_words:
         if word in inverted_index:
@@ -137,8 +148,17 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
                     else:
                         document_scores[filename] += tf_idf_score
                     
-    # Sort documents by TF-IDF score
-    sorted_filenames = sorted(document_scores, key=document_scores.get, reverse=True)
+    # Phase 6: Sorting Logic
+    if sort_by == "size":
+        # Sort by file size descending
+        doc_sizes = {}
+        for doc in document_scores.keys():
+            db_doc = db.query(models.DocumentMetadata).filter(models.DocumentMetadata.filename == doc).first()
+            doc_sizes[doc] = db_doc.size_bytes if db_doc else 0
+        sorted_filenames = sorted(doc_sizes, key=doc_sizes.get, reverse=True)
+    else:
+        # Default: Sort by TF-IDF score
+        sorted_filenames = sorted(document_scores, key=document_scores.get, reverse=True)
     
     # Format the results
     formatted_results = []
@@ -146,6 +166,12 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
         score = document_scores[filename]
         original_text = my_documents.get(filename, "")
         snippet = generate_snippet(all_clean_words, original_text)
+        
+        # Optionally append size info to snippet if sorted by size
+        if sort_by == "size":
+            db_doc = db.query(models.DocumentMetadata).filter(models.DocumentMetadata.filename == filename).first()
+            size_kb = round((db_doc.size_bytes or 0) / 1024, 1)
+            snippet = f"[{size_kb} KB] " + snippet
         
         formatted_results.append({
             "title": filename,
