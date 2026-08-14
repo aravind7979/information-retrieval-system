@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.ingestion.reader import load_documents
 from app.preprocessing.cleaner import clean_and_tokenize
 from app.indexing.indexer import build_inverted_index
+from app.retrieval.snippets import generate_snippet
 from app.storage import models, database
 from app.storage.database import engine, SessionLocal
 
@@ -22,17 +23,16 @@ app.add_middleware(
     allow_credentials=True,
 )
 
-# Global State (In-Memory Index for now)
+# Global State
 my_documents = {}
 final_cleaned_document_data = {}
 inverted_index = {}
+doc_lengths = {}
 query_search = []
 
 def initialize_search_engine():
-    global my_documents, final_cleaned_document_data, inverted_index
+    global my_documents, final_cleaned_document_data, inverted_index, doc_lengths
     
-    # Resolving path to the documents folder at the root
-    # Since main.py is in app/api/, we go up two directories
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     docs_path = os.path.join(base_dir, "documents")
     
@@ -41,7 +41,7 @@ def initialize_search_engine():
     for filename, text in my_documents.items():
         final_cleaned_document_data[filename] = clean_and_tokenize(text)
         
-    inverted_index = build_inverted_index(final_cleaned_document_data)
+    inverted_index, doc_lengths = build_inverted_index(final_cleaned_document_data)
     
     # Populate SQLite with Document Metadata
     db = SessionLocal()
@@ -64,7 +64,6 @@ def initialize_search_engine():
 # Initialize on startup
 initialize_search_engine()
 
-# Dependency to get DB session
 def get_db():
     db = SessionLocal()
     try:
@@ -81,22 +80,44 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
     clean_query = clean_and_tokenize(query)
     document_scores = {}
     
+    # Calculate TF-IDF Score
     for word in clean_query:
         if word in inverted_index:
-            for filename, score in inverted_index[word].items():
+            for filename, tf_idf_score in inverted_index[word].items():
                 if filename not in document_scores:
-                    document_scores[filename] = score
+                    document_scores[filename] = tf_idf_score
                 else:
-                    document_scores[filename] += score
+                    document_scores[filename] += tf_idf_score
                     
-    sorted_docs = sorted(document_scores, key=document_scores.get, reverse=True)
+    # Sort documents by TF-IDF score
+    sorted_filenames = sorted(document_scores, key=document_scores.get, reverse=True)
+    
+    # Format the results
+    formatted_results = []
+    for filename in sorted_filenames:
+        score = document_scores[filename]
+        original_text = my_documents.get(filename, "")
+        snippet = generate_snippet(clean_query, original_text)
+        
+        formatted_results.append({
+            "title": filename,
+            "score": round(score, 4),
+            "snippet": snippet,
+            "type": "document"
+        })
     
     # Add history matches (simplified for now)
     for item in query_search:
         if query.lower() in item.lower():
-            if item not in sorted_docs:
-                sorted_docs.append(item)
+            # Check if history item is already added to results
+            if not any(r["title"] == item for r in formatted_results):
+                formatted_results.append({
+                    "title": item,
+                    "score": 0,
+                    "snippet": "Previous Search",
+                    "type": "history"
+                })
                     
     return {
-        "matches": sorted_docs
+        "matches": formatted_results
     }

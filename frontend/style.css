@@ -199,8 +199,8 @@ body {
 
 #results-list li {
     display: flex;
-    align-items: center;
-    padding: 8px 20px;
+    align-items: flex-start;
+    padding: 10px 20px;
     cursor: pointer;
 }
 
@@ -212,6 +212,20 @@ body {
     color: var(--text-secondary);
     margin-right: 15px;
     font-size: 20px;
+    margin-top: 2px;
+}
+
+.result-content {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.result-title-wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .result-text {
@@ -222,9 +236,22 @@ body {
     text-overflow: ellipsis;
 }
 
-.highlight {
-    font-weight: bold;
-    color: var(--text-primary);
+.result-score {
+    font-size: 12px;
+    color: var(--accent-color);
+    background-color: rgba(138, 180, 248, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 10px;
+}
+
+.result-snippet {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Shortcuts */
