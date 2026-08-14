@@ -81,11 +81,11 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             db.add(new_history)
             db.commit()
             
-    # Phase 4 Logic: Boolean Parsing
-    operator, parts = parse_boolean_query(query)
+    # Phase 5 Logic: Phrase Search Parsing
+    operator, parts, is_phrase, stripped_query = parse_boolean_query(query)
     
     part_doc_sets = []
-    all_clean_words = [] # Keep track of all words for snippet generation
+    all_clean_words = [] 
     
     # Get documents for each part of the boolean query
     for part in parts:
@@ -115,7 +115,18 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             if len(part_doc_sets) > 1:
                 final_docs = final_docs.difference(part_doc_sets[1])
 
-    # Calculate TF-IDF Score only for documents that passed the Boolean filter
+    # Phase 5: Filter exact phrases
+    if is_phrase:
+        phrase_filtered_docs = set()
+        search_target = stripped_query.lower()
+        for doc in final_docs:
+            original_text = my_documents.get(doc, "").lower()
+            # Direct string substring check for exact phrasing
+            if search_target in original_text:
+                phrase_filtered_docs.add(doc)
+        final_docs = phrase_filtered_docs
+
+    # Calculate TF-IDF Score only for documents that passed the filters
     document_scores = {}
     for word in all_clean_words:
         if word in inverted_index:
