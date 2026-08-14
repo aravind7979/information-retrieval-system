@@ -7,6 +7,7 @@ from app.ingestion.reader import load_documents
 from app.preprocessing.cleaner import clean_and_tokenize
 from app.indexing.indexer import build_inverted_index
 from app.retrieval.snippets import generate_snippet
+from app.query.parser import parse_boolean_query
 from app.storage import models, database
 from app.storage.database import engine, SessionLocal
 
@@ -73,7 +74,6 @@ def get_db():
 @app.get("/search")
 def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_db)):
     
-    # Phase 3 Logic: Save History to SQLite instead of in-memory list
     if is_submit:
         existing_history = db.query(models.SearchHistory).filter(models.SearchHistory.query_text == query).first()
         if not existing_history:
@@ -81,17 +81,50 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             db.add(new_history)
             db.commit()
             
-    clean_query = clean_and_tokenize(query)
-    document_scores = {}
+    # Phase 4 Logic: Boolean Parsing
+    operator, parts = parse_boolean_query(query)
     
-    # Calculate TF-IDF Score
-    for word in clean_query:
+    part_doc_sets = []
+    all_clean_words = [] # Keep track of all words for snippet generation
+    
+    # Get documents for each part of the boolean query
+    for part in parts:
+        clean_part = clean_and_tokenize(part)
+        all_clean_words.extend(clean_part)
+        
+        part_docs = set()
+        for word in clean_part:
+            if word in inverted_index:
+                for filename in inverted_index[word].keys():
+                    part_docs.add(filename)
+        part_doc_sets.append(part_docs)
+        
+    # Apply Boolean Logic (AND / OR / NOT) using Python Sets
+    final_docs = set()
+    if operator == "OR":
+        for doc_set in part_doc_sets:
+            final_docs = final_docs.union(doc_set)
+    elif operator == "AND":
+        if len(part_doc_sets) > 0:
+            final_docs = part_doc_sets[0]
+            for doc_set in part_doc_sets[1:]:
+                final_docs = final_docs.intersection(doc_set)
+    elif operator == "NOT":
+        if len(part_doc_sets) > 0:
+            final_docs = part_doc_sets[0]
+            if len(part_doc_sets) > 1:
+                final_docs = final_docs.difference(part_doc_sets[1])
+
+    # Calculate TF-IDF Score only for documents that passed the Boolean filter
+    document_scores = {}
+    for word in all_clean_words:
         if word in inverted_index:
             for filename, tf_idf_score in inverted_index[word].items():
-                if filename not in document_scores:
-                    document_scores[filename] = tf_idf_score
-                else:
-                    document_scores[filename] += tf_idf_score
+                if filename in final_docs:
+                    if filename not in document_scores:
+                        document_scores[filename] = tf_idf_score
+                    else:
+                        document_scores[filename] += tf_idf_score
                     
     # Sort documents by TF-IDF score
     sorted_filenames = sorted(document_scores, key=document_scores.get, reverse=True)
@@ -101,7 +134,7 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
     for filename in sorted_filenames:
         score = document_scores[filename]
         original_text = my_documents.get(filename, "")
-        snippet = generate_snippet(clean_query, original_text)
+        snippet = generate_snippet(all_clean_words, original_text)
         
         formatted_results.append({
             "title": filename,
@@ -110,11 +143,10 @@ def search_docs(query: str, is_submit: bool = False, db: Session = Depends(get_d
             "type": "document"
         })
     
-    # Phase 3 Logic: Fetch History Matches from SQLite
+    # Fetch History Matches from SQLite
     all_history_records = db.query(models.SearchHistory).all()
     for record in all_history_records:
         if query.lower() in record.query_text.lower():
-            # Check if history item is already added to results
             if not any(r["title"] == record.query_text for r in formatted_results):
                 formatted_results.append({
                     "title": record.query_text,
