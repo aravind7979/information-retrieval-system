@@ -8,6 +8,7 @@ from app.ingestion.reader import load_documents
 from app.preprocessing.cleaner import clean_and_tokenize
 from app.indexing.indexer import build_inverted_index
 from app.retrieval.snippets import generate_snippet
+from app.retrieval.semantic import expand_query_with_synonyms
 from app.query.parser import parse_boolean_query
 from app.storage import models, database
 from app.storage.database import engine, SessionLocal
@@ -95,6 +96,12 @@ def search_docs(
     
     for part in parts:
         clean_part = clean_and_tokenize(part)
+        
+        # Phase 7: Semantic Synonym Expansion
+        # Only expand if it's not a strict phrase search
+        if not is_phrase:
+            clean_part = expand_query_with_synonyms(clean_part)
+            
         all_clean_words.extend(clean_part)
         
         part_docs = set()
@@ -128,7 +135,6 @@ def search_docs(
                 phrase_filtered_docs.add(doc)
         final_docs = phrase_filtered_docs
 
-    # Phase 6: Extension Filtering using SQLite DB
     if ext_filter:
         valid_ext_docs = set()
         for doc in final_docs:
@@ -148,16 +154,13 @@ def search_docs(
                     else:
                         document_scores[filename] += tf_idf_score
                     
-    # Phase 6: Sorting Logic
     if sort_by == "size":
-        # Sort by file size descending
         doc_sizes = {}
         for doc in document_scores.keys():
             db_doc = db.query(models.DocumentMetadata).filter(models.DocumentMetadata.filename == doc).first()
             doc_sizes[doc] = db_doc.size_bytes if db_doc else 0
         sorted_filenames = sorted(doc_sizes, key=doc_sizes.get, reverse=True)
     else:
-        # Default: Sort by TF-IDF score
         sorted_filenames = sorted(document_scores, key=document_scores.get, reverse=True)
     
     # Format the results
@@ -167,7 +170,6 @@ def search_docs(
         original_text = my_documents.get(filename, "")
         snippet = generate_snippet(all_clean_words, original_text)
         
-        # Optionally append size info to snippet if sorted by size
         if sort_by == "size":
             db_doc = db.query(models.DocumentMetadata).filter(models.DocumentMetadata.filename == filename).first()
             size_kb = round((db_doc.size_bytes or 0) / 1024, 1)
