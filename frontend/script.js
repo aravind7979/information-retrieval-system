@@ -5,7 +5,7 @@ const searchInput = document.getElementById('search-input');
 const resultsList = document.getElementById('results-list');
 
 // Backend API URL
-const BACKEND_URL = "http://13.61.39.239:8000/search";
+const BACKEND_URL = "/api/search";
 
 // Event Listeners
 searchInput.addEventListener('input', handleInput);
@@ -125,4 +125,5 @@ searchInput.addEventListener('keypress', (e) => {
         }
     }
 });
+
 

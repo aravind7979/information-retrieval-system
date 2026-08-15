@@ -33,7 +33,7 @@ If you want to clone this repo and run the search engine on your own machine:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/YourUsername/information-retrieval-system.git
+   git clone https://github.com/aravind7979/information-retrieval-system.git
    cd information-retrieval-system
    ```
 
